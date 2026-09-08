@@ -19,7 +19,7 @@ def launch(a):
     cmd = (
         "/start.sh >/dev/null 2>&1 & mkdir -p /workspace && exec > >(tee -a /workspace/boot.log) 2>&1; "
         "set -x; cd /workspace && rm -rf metamodelling && git clone -q %s && cd metamodelling && "
-        "pip install -q -r requirements-pod.txt 2>&1 | tail -2 && python -c \"import torch,transformers;print(torch.__version__,torch.cuda.is_available(),transformers.__version__)\" && nvidia-smi --query-gpu=name,memory.total --format=csv && "
+        "pip install -q -r requirements-pod.txt 2>&1 | tail -2 && pip list 2>/dev/null | grep -e ^torch -e ^transformers && nvidia-smi --query-gpu=name,memory.total --format=csv && "
         "timeout %dh python -m delta_nla.collect --model %s --layers %s --n-docs %d --positions-per-doc %d --max-len %d "
         "--out data/raw --save-unembed --seed %d --wandb delta-nla --shard-size 2500 && "
         "python -m delta_nla.build_evidence --raw data/raw --out data/raw/evidence.jsonl --model %s --device cuda && "
@@ -38,7 +38,9 @@ def launch(a):
             )
             print("launched on", gpu, cloud); break
         except runpod.error.QueryError as e:
-            print("unavailable:", gpu, cloud, "-", str(e)[:80])
+            if "no longer any instances" not in str(e) and "not available" not in str(e).lower():
+                sys.exit(f"launch error: {str(e)[:300]}")
+            print("unavailable:", gpu, cloud)
     if pod is None:
         sys.exit("no GPU available")
     print(json.dumps({k: pod.get(k) for k in ("id", "name", "desiredStatus", "costPerHr", "machineId")}, indent=1))
