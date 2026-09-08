@@ -288,6 +288,8 @@ def main():
         art = __import__("wandb").Artifact(f"raw-{args.model.split('/')[-1]}", type="raw-evidence")
         art.add_dir(str(out))
         wb.log_artifact(art); wb.finish()
+    meta_f.close(); docs_f.close()
+    os._exit(0)  # skip interpreter finalisation: datasets' streaming threads crash on shutdown
 
 
 if __name__ == "__main__":

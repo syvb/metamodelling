@@ -20,8 +20,9 @@ import torch
 class Lens:
     def __init__(self, unembed_path: str | Path, tokenizer, device: str = "cpu"):
         d = torch.load(unembed_path, map_location=device)
-        self.W_U = d["W_U"].float()          # [V, d]
-        self.g = d["norm_w"].float()          # [d]
+        self.device = device
+        self.W_U = d["W_U"].to(device).float()          # [V, d]
+        self.g = d["norm_w"].to(device).float()          # [d]
         self.eps = float(d["eps"])
         self.tok = tokenizer
         self.V = self.W_U.shape[0]
@@ -89,12 +90,29 @@ class Lens:
             o["p"] = float(p[o["id"]])
         return out
 
+    def prob_shift(self, X: torch.Tensor, Y: torch.Tensor, k: int = 6) -> tuple[list[dict], list[dict]]:
+        """Tokens whose ordinary logit-lens probability rose / fell most from X to Y.
+
+        Unlike the raw lens of d (which is dominated by directions W_U barely reads at middle
+        layers), this only surfaces tokens that are already legible in the lens at X or Y.
+        """
+        pX = torch.softmax(self.state_logits(X), -1)
+        pY = torch.softmax(self.state_logits(Y), -1)
+        diff = pY - pX
+        up = self.top_tokens(diff, k, +1)
+        down = self.top_tokens(diff, k, -1)
+        for o in up + down:
+            o["p_X"] = float(pX[o["id"]]); o["p_Y"] = float(pY[o["id"]])
+        return up, down
+
     def evidence(self, X: np.ndarray, d: np.ndarray, d_attn: np.ndarray, d_mlp: np.ndarray, k: int = 6) -> dict:
-        X_t, d_t, da_t, dm_t = (torch.from_numpy(a.astype(np.float32)) for a in (X, d, d_attn, d_mlp))
+        X_t, d_t, da_t, dm_t = (torch.from_numpy(a.astype(np.float32)).to(self.device) for a in (X, d, d_attn, d_mlp))
         Y_t = X_t + d_t
+        shift_up, shift_down = self.prob_shift(X_t, Y_t, k)
         ev = {
             "state_X": self.state_top(X_t, k),
             "state_Y": self.state_top(Y_t, k),
+            "shift_up": shift_up, "shift_down": shift_down,
         }
         for name, v in (("d", d_t), ("d_attn", da_t), ("d_mlp", dm_t)):
             lg = self.delta_logits(v, X_t)

@@ -1,0 +1,7 @@
+transformers==5.16.1
+datasets
+accelerate
+safetensors
+numpy
+wandb
+runpod
