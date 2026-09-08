@@ -54,7 +54,11 @@ def describe(ev: dict, rng: random.Random | None = None, max_items: int = 3) -> 
     parts = []
 
     # 1. main clause: effect on the model's eventual prediction (total effect) or direct lens
-    use_effect = eff["kl"] > 0.02 and up and rng.random() < 0.75
+    # prefer the causal effect whenever it is non-trivial; the lens shift is only legible when
+    # the shifted tokens carry real probability, otherwise fall back to a "small diffuse change" sentence
+    use_effect = up and (m["kl_pct"] >= 20 or rng.random() < 0.5)
+    lup = [t for t, x in zip(lup, lens["shift_up"]) if x["p_Y"] >= 0.02]
+    ldown = [t for t, x in zip(ldown, lens["shift_down"]) if x["p_X"] >= 0.02]
     if use_effect:
         tmpl = rng.choice([
             "The update {mag} pushes the final prediction toward {up}{down_clause}.",
