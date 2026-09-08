@@ -3,7 +3,7 @@ import argparse, os, shutil
 import wandb
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--project", default="syvb/delta-nla")
+ap.add_argument("--project", default="octahedral-systems/delta-nla")
 ap.add_argument("--tag", default="Qwen3-8B")
 ap.add_argument("--out", default="data/raw")
 ap.add_argument("--what", default="raw,evidence", help="comma list of raw,evidence")
