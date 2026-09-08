@@ -125,9 +125,11 @@ class Lens:
 def load_vectors(raw_dir: str | Path) -> dict[str, dict[str, np.ndarray]]:
     """Return {rec_id: {X, d, d_attn, d_mlp}} for all shards in raw_dir (fp16 -> kept as fp16)."""
     out: dict[str, dict[str, np.ndarray]] = {}
+    keys = ("X", "d", "d_attn", "d_mlp")
     for f in sorted(Path(raw_dir).glob("vec_*.npz")):
-        z = np.load(f)
-        ids = z["ids"]
+        with np.load(f) as z:
+            ids = z["ids"]
+            arrs = {k: z[k] for k in keys}  # read each array once (NpzFile re-reads on every access)
         for j, rid in enumerate(ids):
-            out[str(rid)] = {k: z[k][j] for k in ("X", "d", "d_attn", "d_mlp")}
+            out[str(rid)] = {k: arrs[k][j] for k in keys}
     return out
