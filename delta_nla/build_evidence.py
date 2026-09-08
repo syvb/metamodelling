@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--min-p", type=float, default=1e-3, help="drop effect tokens with max(p, p_without) below this")
+    ap.add_argument("--ref-records", default="", help="records.jsonl of a large run; percentiles are computed against it (nearest layer)")
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
@@ -75,10 +76,25 @@ def main():
     for i, r in enumerate(recs):
         by_layer[r["layer"]].append(i)
     rel_pct = np.zeros(len(recs)); kl_pct = np.zeros(len(recs))
-    for n, idxs in by_layer.items():
-        rel = np.array([recs[i]["norm_d"] / recs[i]["norm_X"] for i in idxs])
-        kl = np.array([recs[i]["effect"]["all"]["kl"] for i in idxs])
-        rel_pct[idxs] = pct_rank(rel); kl_pct[idxs] = pct_rank(kl)
+    if args.ref_records:
+        # percentiles relative to a large reference collection (e.g. the fineweb run), nearest layer
+        ref = defaultdict(lambda: ([], []))
+        for l in open(args.ref_records):
+            r = json.loads(l); ref[r["layer"]][0].append(r["norm_d"] / r["norm_X"]); ref[r["layer"]][1].append(r["effect"]["all"]["kl"])
+        ref = {n: (np.sort(a), np.sort(b)) for n, (a, b) in ref.items()}
+        ref_layers = np.array(sorted(ref))
+        for n, idxs in by_layer.items():
+            rn = int(ref_layers[np.abs(ref_layers - n).argmin()])
+            ra, rb = ref[rn]
+            for i in idxs:
+                rel_pct[i] = 100.0 * np.searchsorted(ra, recs[i]["norm_d"] / recs[i]["norm_X"]) / len(ra)
+                kl_pct[i] = 100.0 * np.searchsorted(rb, recs[i]["effect"]["all"]["kl"]) / len(rb)
+        print(f"percentiles vs reference {args.ref_records} (layers {list(ref)})")
+    else:
+        for n, idxs in by_layer.items():
+            rel = np.array([recs[i]["norm_d"] / recs[i]["norm_X"] for i in idxs])
+            kl = np.array([recs[i]["effect"]["all"]["kl"] for i in idxs])
+            rel_pct[idxs] = pct_rank(rel); kl_pct[idxs] = pct_rank(kl)
 
     def tokstr(i):
         return tok.decode([i])

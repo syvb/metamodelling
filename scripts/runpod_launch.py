@@ -15,16 +15,17 @@ FALLBACK_GPUS = ["NVIDIA A40", "NVIDIA RTX A6000", "NVIDIA GeForce RTX 4090", "N
 
 
 def launch(a):
-    model_tag = a.model.split("/")[-1]
+    model_tag = a.tag or a.model.split("/")[-1]
     cmd = (
         "/start.sh >/dev/null 2>&1 & mkdir -p /workspace && exec > >(tee -a /workspace/boot.log) 2>&1; "
         "set -x; cd /workspace && rm -rf metamodelling && git clone -q %s && cd metamodelling && "
         "pip uninstall -y -q torchvision torchaudio; pip install -q -r requirements-pod.txt 2>&1 | tail -2 && pip list 2>/dev/null | grep -e ^torch -e ^transformers && nvidia-smi --query-gpu=name,memory.total --format=csv && "
         "timeout %dh python -m delta_nla.collect --model %s --layers %s --n-docs %d --positions-per-doc %d --max-len %d "
-        "--out data/raw --save-unembed --seed %d --wandb delta-nla --shard-size 2500 && "
-        "python -m delta_nla.build_evidence --raw data/raw --out data/raw/evidence.jsonl --model %s --device cuda && "
-        "python scripts/pod_finish.py data/raw; echo FINISHED; sleep infinity"
-    ) % (REPO, a.max_hours, a.model, a.layers, a.n_docs, a.positions_per_doc, a.max_len, a.seed, a.model)
+        "--out %s --save-unembed --seed %d --wandb delta-nla --shard-size 2500 %s && "
+        "python -m delta_nla.build_evidence --raw %s --out %s/evidence.jsonl --model %s --device cuda && "
+        "python scripts/pod_finish.py %s; echo FINISHED; sleep infinity"
+    ) % (REPO, a.max_hours, a.model, a.layers, a.n_docs, a.positions_per_doc, a.max_len, a.out, a.seed,
+         (f"--prompts-file {a.prompts_file} --last-k {a.last_k}" if a.prompts_file else ""), a.out, a.out, a.model, a.out)
     attempts = [(a.gpu, a.cloud)] + [(g, c) for g in FALLBACK_GPUS for c in ("COMMUNITY", "SECURE") if (g, c) != (a.gpu, a.cloud)]
     pod = None
     for gpu, cloud in attempts:
@@ -34,7 +35,7 @@ def launch(a):
                 container_disk_in_gb=80, volume_in_gb=0, min_memory_in_gb=24, min_vcpu_count=4, ports="22/tcp",
                 docker_args=f"bash -lc '{cmd}'",
                 env={"WANDB_API_KEY": WANDB_KEY, "WANDB_PROJECT": "delta-nla", "RUNPOD_API_KEY": runpod.api_key,
-                     "MODEL_TAG": model_tag, "HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTHONUNBUFFERED": "1", "KEEP_POD": "1" if a.keep else "0"},
+                     "MODEL_TAG": model_tag, "HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTHONUNBUFFERED": "1", "KEEP_POD": "1" if a.keep else "0", "UPLOAD_VECTORS": "1" if a.prompts_file else "0"},
             )
             print("launched on", gpu, cloud); break
         except runpod.error.QueryError as e:
@@ -64,6 +65,8 @@ if __name__ == "__main__":
     l.add_argument("--n-docs", type=int, default=1500); l.add_argument("--positions-per-doc", type=int, default=3)
     l.add_argument("--max-len", type=int, default=512); l.add_argument("--seed", type=int, default=1)
     l.add_argument("--max-hours", type=int, default=4); l.add_argument("--keep", action="store_true")
+    l.add_argument("--prompts-file", default=""); l.add_argument("--last-k", type=int, default=2)
+    l.add_argument("--out", default="data/raw"); l.add_argument("--tag", default="")
     sub.add_parser("status")
     t = sub.add_parser("terminate"); t.add_argument("pod_id")
     a = ap.parse_args()

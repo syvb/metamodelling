@@ -29,6 +29,7 @@ def log(*a):
 
 @dataclass
 class Capture:
+    active: bool = True   # hooks record only while True (the ablation tail runs must not overwrite clean captures)
     attn_out: dict = field(default_factory=dict)   # layer -> [S, d]
     mlp_out: dict = field(default_factory=dict)    # layer -> [S, d]
     attn_w: dict = field(default_factory=dict)     # layer -> [H, S, S]
@@ -42,18 +43,24 @@ def install_hooks(model, layers: list[int], cap: Capture):
     for n in layers:
         blk = blocks[n]
         def attn_hook(mod, args, kwargs, out, n=n):
+            if not cap.active:
+                return
             cap.attn_out[n] = out[0][0].detach()
             if out[1] is not None:
                 cap.attn_w[n] = out[1][0].detach()
         def mlp_hook(mod, args, out, n=n):
-            cap.mlp_out[n] = out[0].detach()
+            if cap.active:
+                cap.mlp_out[n] = out[0].detach()
         def v_hook(mod, args, out, n=n):
-            cap.v[n] = out[0].detach()
+            if cap.active:
+                cap.v[n] = out[0].detach()
         handles.append(blk.self_attn.register_forward_hook(attn_hook, with_kwargs=True))
         handles.append(blk.mlp.register_forward_hook(mlp_hook))
         handles.append(blk.self_attn.v_proj.register_forward_hook(v_hook))
         if n + 1 < len(blocks):
             def pre_hook(mod, args, kwargs, n=n):
+                if not cap.active:
+                    return
                 cap.next_kwargs[n] = {k: v for k, v in kwargs.items() if k != "hidden_states"}
                 if args:
                     cap.next_kwargs[n]["_args"] = args[1:]
@@ -163,11 +170,13 @@ def main():
     ap.add_argument("--shard-size", type=int, default=2000)
     ap.add_argument("--wandb", default="")
     ap.add_argument("--save-unembed", action="store_true", help="save lm_head + final norm weights for offline lens")
+    ap.add_argument("--prompts-file", default="", help="jsonl of {id, text}: record the last --last-k positions of each prompt instead of sampling a corpus")
+    ap.add_argument("--last-k", type=int, default=2)
     args = ap.parse_args()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
     random.seed(args.seed); torch.manual_seed(args.seed)
-    layers = [int(x) for x in args.layers.split(",")]
+    layers = None if args.layers == "all" else [int(x) for x in args.layers.split(",")]
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     dtype = getattr(torch, args.dtype)
 
@@ -176,6 +185,8 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype, attn_implementation="eager").to(args.device).eval()
     cfg = model.config
     L = cfg.num_hidden_layers
+    if layers is None:
+        layers = list(range(L))
     assert max(layers) < L
     log(f"layers={L} d={cfg.hidden_size} H={cfg.num_attention_heads} KV={cfg.num_key_value_heads}")
 
@@ -211,11 +222,17 @@ def main():
 
     n_rec = 0; n_doc = 0; t0 = time.time()
     sum_d = {n: torch.zeros(cfg.hidden_size, dtype=torch.float64) for n in layers}
-    for doc_i, text in iter_docs(args.dataset, args.dataset_config, args.split, args.seed, skip=args.skip_docs):
+    if args.prompts_file:
+        prompt_recs = [json.loads(l) for l in open(args.prompts_file) if l.strip()]
+        doc_iter = ((r["id"], r["text"]) for r in prompt_recs)
+        args.n_docs = len(prompt_recs)
+    else:
+        doc_iter = iter_docs(args.dataset, args.dataset_config, args.split, args.seed, skip=args.skip_docs)
+    for doc_i, text in doc_iter:
         if n_doc >= args.n_docs:
             break
         ids_full = tok(text, add_special_tokens=False, return_tensors="pt").input_ids[0]
-        if len(ids_full) < args.min_len:
+        if not args.prompts_file and len(ids_full) < args.min_len:
             continue
         # random truncation window like the NLA paper
         if len(ids_full) > args.max_len:
@@ -225,13 +242,19 @@ def main():
             start = 0; ids = ids_full
         S = len(ids)
         ids_d = ids.unsqueeze(0).to(args.device)
+        cap.active = True
         with torch.no_grad():
             outp = model(ids_d, output_hidden_states=True, use_cache=False)
+        cap.active = False  # everything below (ablation tail runs) must not touch the clean captures
         hs = outp.hidden_states  # L+1 x [1,S,d]; hs[n] is the input to block n; hs[L] is post-final-norm? (see check below)
         true_lp_all = F.log_softmax(outp.logits[0].float(), dim=-1)  # [S, V]
-        positions = sorted(random.sample(range(args.min_pos, S), min(args.positions_per_doc, S - args.min_pos)))
-        doc_id = f"d{doc_i}"
-        docs_f.write(json.dumps({"doc_id": doc_id, "ids": ids.tolist(), "start": start, "src_index": doc_i}) + "\n")
+        if args.prompts_file:
+            positions = list(range(max(1, S - args.last_k), S))
+            doc_id = str(doc_i)
+        else:
+            positions = sorted(random.sample(range(args.min_pos, S), min(args.positions_per_doc, S - args.min_pos)))
+            doc_id = f"d{doc_i}"
+        docs_f.write(json.dumps({"doc_id": doc_id, "ids": ids.tolist(), "start": start, "src_index": doc_i, "text": text if args.prompts_file else None}) + "\n")
 
         for n in layers:
             X_all = hs[n][0].float()
@@ -239,9 +262,9 @@ def main():
             # residual leaving block n, computed from hooks (hs[n+1] may equal it, but for the last layer HF applies the final norm)
             Y_all = X_all + d_attn_all + d_mlp_all
             if n + 1 < L:
-                err = (hs[n + 1][0].float() - Y_all).abs().max().item()
-                if err > 1e-2 * Y_all.abs().max().item():
-                    log(f"WARNING layer {n}: hs[n+1] != X+d_attn+d_mlp (max abs err {err:.3g})")
+                rel_err = ((hs[n + 1][0].float() - Y_all).norm(dim=-1) / Y_all.norm(dim=-1)).max().item()
+                if rel_err > 1e-3:
+                    raise RuntimeError(f"layer {n}: hs[n+1] != X+d_attn+d_mlp (max rel err {rel_err:.3g}); captures are stale")
             # ablation batch: for each position, 3 variants (remove all / remove attn / remove mlp)
             P = len(positions)
             hid = Y_all.to(dtype).unsqueeze(0).repeat(3 * P, 1, 1)

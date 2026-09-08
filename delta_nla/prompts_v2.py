@@ -54,8 +54,10 @@ def content_token(tok: str) -> bool:
         return False
     if any("一" <= ch <= "鿿" or "぀" <= ch <= "ヿ" or "가" <= ch <= "힯" for ch in s):
         return True  # CJK: usually a whole word
+    if _re.fullmatch(r"\d+", s):
+        return True  # digits carry quantity thoughts (kept; the prompt says how to talk about them)
     if not _re.search(r"[A-Za-zÀ-ɏЀ-ӿ]", s):
-        return False  # digits / punctuation
+        return False  # punctuation
     if len(s) < 3:
         return False
     if not tok.startswith(" ") and not s[0].isupper():

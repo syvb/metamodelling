@@ -4,7 +4,11 @@ import wandb
 raw = sys.argv[1] if len(sys.argv) > 1 else "data/raw"
 run = wandb.init(project=os.environ.get("WANDB_PROJECT", "delta-nla"), job_type="evidence")
 art = wandb.Artifact("evidence-" + os.environ.get("MODEL_TAG", "model"), type="evidence")
-for f in ("evidence.jsonl", "records.jsonl", "docs.jsonl", "mean_d.pt"):
+import glob
+files = ["evidence.jsonl", "records.jsonl", "docs.jsonl", "mean_d.pt"]
+if os.environ.get("UPLOAD_VECTORS") == "1":
+    files += [os.path.basename(x) for x in glob.glob(os.path.join(raw, "vec_*.npz"))]
+for f in files:
     p = os.path.join(raw, f)
     if os.path.exists(p):
         art.add_file(p)
