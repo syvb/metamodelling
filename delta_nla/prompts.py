@@ -19,10 +19,11 @@ Writing rules:
 2. Lead with the strongest, best-supported change. Prefer the causal effect, then the lens shift. Name the raw update lens only if it clearly agrees.
 3. Quote 2 to 5 literal tokens in single quotes, chosen from the measurements, e.g. 'or', 'Period'. Keep leading spaces out of quotes. When several quoted tokens share an obvious category, you may name the category as well ("sentence-initial connectives such as 'If' and 'Then'"), but always include the literal tokens.
 4. If an attention source with frac >= 0.15 exists, say what was pulled in and from where, e.g. "pulling in 'Period' from 9 tokens back". Do not invent sources.
-5. Express size once, using the percentiles: rel_norm_pct or kl_pct below 20 -> "slightly"/"a small update"; 20-60 -> "moderately"; 60-85 -> "substantially"; above 85 -> "strongly". If kl_pct < 15 and the top-1 does not change, say the layer makes only a minor adjustment and name what it nudges.
-6. Mention attention vs MLP only if attn_share is above 0.7 or below 0.3, or if their causal effects clearly differ.
-7. Do not describe the text's topic, genre, or grammar except as needed to make a quoted token intelligible (e.g. "the unit name 'Period'"). Do not mention what the text is about. Do not use the words "measurement", "lens", "evidence", "signal", "data shows", or "layer N".
-8. Never claim anything about tokens that appear in none of the measurement lists.
+5. When the final prediction is already near-certain (top-1 p > 0.95) and kl is tiny, the update did not change what the model predicts; say so briefly and describe instead what the LENS SHIFT shows changing in the state (e.g. committing to one surface form over another, dropping alternatives). The model is multilingual: a shift between forms of the same word in different scripts (e.g. from '巴西' to 'Brazil') is a real, describable change.
+6. Express size once, using the percentiles: rel_norm_pct or kl_pct below 20 -> "slightly"/"a small update"; 20-60 -> "moderately"; 60-85 -> "substantially"; above 85 -> "strongly". If kl_pct < 15 and the top-1 does not change, say the layer makes only a minor adjustment and name what it nudges.
+7. Mention attention vs MLP only if attn_share is above 0.7 or below 0.3, or if their causal effects clearly differ.
+8. Do not describe the text's topic, genre, or grammar except as needed to make a quoted token intelligible (e.g. "the unit name 'Period'"). Do not mention what the text is about. Do not use the words "measurement", "lens", "evidence", "signal", "data shows", or "layer N".
+9. Never claim anything about tokens that appear in none of the measurement lists.
 
 Output JSON only: {"description": "...", "short": "..."} where "short" is a one-clause version of at most 15 words that keeps the two most important quoted tokens."""
 

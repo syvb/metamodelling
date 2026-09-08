@@ -31,6 +31,13 @@ def snippet(tok, ids: list[int], s: int, before: int = 6, after: int = 3) -> str
     return f"{left}[[{mid}]]{right}".replace("\n", "\\n")
 
 
+def sig(x: float, n: int = 3) -> float:
+    """Round to n significant figures (keeps small probabilities visible)."""
+    if x == 0:
+        return 0.0
+    return float(f"{x:.{n}g}")
+
+
 def pct_rank(values: np.ndarray):
     order = np.argsort(values)
     ranks = np.empty(len(values), dtype=np.float64)
@@ -47,6 +54,7 @@ def main():
     ap.add_argument("--k", type=int, default=6)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--min-p", type=float, default=1e-3, help="drop effect tokens with max(p, p_without) below this")
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
@@ -91,12 +99,17 @@ def main():
                         s = lens.display(x["id"])
                         if s is None:
                             continue
-                        out.append({"tok": s, "dlp": round(x["dlp"], 3), "p": round(x["p"], 4), **({"p_abl": round(x["p_abl"], 4)} if "p_abl" in x else {})})
+                        # drop tokens whose probability is negligible both with and without the update:
+                        # log-prob ratios there are noise, not a change the model's prediction reflects
+                        p_hi = max(x["p"], x.get("p_abl", 0.0))
+                        if p_hi < args.min_p:
+                            continue
+                        out.append({"tok": s, "dlp": round(x["dlp"], 3), "p": sig(x["p"]), **({"p_abl": sig(x["p_abl"])} if "p_abl" in x else {})})
                     return out[:args.k]
                 eff[name] = {
                     "up": fmt(e["up"]), "down": fmt(e["down"]), "kl": round(e["kl"], 4),
                     "top1_true": tokstr(e["top1_true"]), "top1_without": tokstr(e["top1_abl"]),
-                    "p_top1_true": round(e["p_top1_true"], 4), "p_top1_without": round(e["p_top1_true_under_abl"], 4),
+                    "p_top1_true": sig(e["p_top1_true"]), "p_top1_without": sig(e["p_top1_true_under_abl"]),
                     "top1_changes": e["top1_true"] != e["top1_abl"],
                 }
             src = r["attn_sources"]
@@ -122,10 +135,10 @@ def main():
                     "attn_share": round(na / (na + nm + 1e-9), 3), "cos_attn_mlp": round(r["cos_attn_mlp"], 3),
                     "cos_d_X": round(r["cos_d_X"], 3), "cos_Y_X": round(r["cos_Y_X"], 4),
                 },
-                "lens": {k: ([{kk: (round(vv, 4) if isinstance(vv, float) else vv) for kk, vv in x.items() if kk in ("tok", "p", "p_X", "p_Y")} for x in val] if isinstance(val, list) else round(val, 3)) for k, val in lz.items()},
+                "lens": {k: ([{kk: (sig(vv) if isinstance(vv, float) else vv) for kk, vv in x.items() if kk in ("tok", "p", "p_X", "p_Y")} for x in val] if isinstance(val, list) else round(val, 3)) for k, val in lz.items()},
                 "effect": eff,
                 "sources": {"top": sources[:5], "sink_frac": round(src["sink_frac"], 3), "self_frac": round(src["self_frac"], 3)},
-                "model_top": [{"tok": tokstr(x["id"]), "p": round(x["p"], 4)} for x in r["true_top"][:5]],
+                "model_top": [{"tok": tokstr(x["id"]), "p": sig(x["p"])} for x in r["true_top"][:5]],
             }
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
             if i % 1000 == 0:
