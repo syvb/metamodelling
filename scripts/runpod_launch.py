@@ -19,7 +19,7 @@ def launch(a):
     cmd = (
         "/start.sh >/dev/null 2>&1 & mkdir -p /workspace && exec > >(tee -a /workspace/boot.log) 2>&1; "
         "set -x; cd /workspace && rm -rf metamodelling && git clone -q %s && cd metamodelling && "
-        "pip install -q -r requirements-pod.txt 2>&1 | tail -2 && nvidia-smi --query-gpu=name,memory.total --format=csv && "
+        "pip install -q -r requirements-pod.txt 2>&1 | tail -2 && python -c \"import torch,transformers;print(torch.__version__,torch.cuda.is_available(),transformers.__version__)\" && nvidia-smi --query-gpu=name,memory.total --format=csv && "
         "timeout %dh python -m delta_nla.collect --model %s --layers %s --n-docs %d --positions-per-doc %d --max-len %d "
         "--out data/raw --save-unembed --seed %d --wandb delta-nla --shard-size 2500 && "
         "python -m delta_nla.build_evidence --raw data/raw --out data/raw/evidence.jsonl --model %s --device cuda && "

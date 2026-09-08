@@ -1,3 +1,4 @@
+torch>=2.6
 transformers==5.16.1
 datasets
 accelerate
