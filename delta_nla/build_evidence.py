@@ -22,9 +22,10 @@ def load_docs(raw: Path) -> dict[str, list[int]]:
     return docs
 
 
-def snippet(tok, ids: list[int], s: int, before: int = 6, after: int = 3) -> str:
-    """Short text window around token s, with the token itself bracketed."""
-    lo, hi = max(0, s - before), min(len(ids), s + after + 1)
+def snippet(tok, ids: list[int], s: int, t: int, before: int = 6, after: int = 3) -> str:
+    """Short text window around token s, with the token itself bracketed. Never shows anything past
+    the current position t (that would leak the true continuation to the description writer)."""
+    lo, hi = max(0, s - before), min(len(ids), s + after + 1, t + 1)
     left = tok.decode(ids[lo:s])
     mid = tok.decode(ids[s:s + 1])
     right = tok.decode(ids[s + 1:hi])
@@ -122,7 +123,7 @@ def main():
                 st = tokstr(ids[s["s"]])
                 if not any(ch.isalnum() for ch in st):
                     continue  # whitespace / punctuation source tokens are not informative to name
-                sources.append({"offset": t - s["s"], "tok": st, "snippet": snippet(tok, ids, s["s"]),
+                sources.append({"offset": t - s["s"], "tok": st, "snippet": snippet(tok, ids, s["s"], t),
                                 "frac": round(s["frac"], 3), "mass": round(s["mass"], 3)})
             na, nm = r["norm_d_attn"], r["norm_d_mlp"]
             out = {
