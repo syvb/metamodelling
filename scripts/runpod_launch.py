@@ -11,6 +11,7 @@ runpod.api_key = open(os.path.expanduser("~/.runpod_key")).read().strip()
 WANDB_KEY = open(os.path.expanduser("~/.wandb_key")).read().strip()
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 REPO = "https://github.com/syvb/metamodelling.git"
+FALLBACK_GPUS = ["NVIDIA A40", "NVIDIA RTX A6000", "NVIDIA GeForce RTX 4090", "NVIDIA L40", "NVIDIA RTX 6000 Ada Generation", "NVIDIA L40S"]
 
 
 def launch(a):
@@ -23,14 +24,23 @@ def launch(a):
         "python -m delta_nla.build_evidence --raw data/raw --out data/raw/evidence.jsonl --model %s --device cuda && "
         "python scripts/pod_finish.py data/raw; echo FINISHED; sleep infinity"
     ) % (REPO, a.max_hours, a.model, a.layers, a.n_docs, a.positions_per_doc, a.max_len, a.seed, a.model)
-    pod = runpod.create_pod(
-        name=f"delta-nla-{model_tag}", image_name=IMAGE, gpu_type_id=a.gpu, cloud_type=a.cloud, gpu_count=1,
-        container_disk_in_gb=80, volume_in_gb=0, min_memory_in_gb=40, min_vcpu_count=6,
-        docker_args=f"bash -lc '{cmd}'",
-        env={"WANDB_API_KEY": WANDB_KEY, "WANDB_PROJECT": "delta-nla", "RUNPOD_API_KEY": runpod.api_key,
-             "MODEL_TAG": model_tag, "HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTHONUNBUFFERED": "1", "KEEP_POD": "1" if a.keep else "0"},
-    )
-    print(json.dumps(pod, indent=1))
+    attempts = [(a.gpu, a.cloud)] + [(g, c) for g in FALLBACK_GPUS for c in ("COMMUNITY", "SECURE") if (g, c) != (a.gpu, a.cloud)]
+    pod = None
+    for gpu, cloud in attempts:
+        try:
+            pod = runpod.create_pod(
+                name=f"delta-nla-{model_tag}", image_name=IMAGE, gpu_type_id=gpu, cloud_type=cloud, gpu_count=1,
+                container_disk_in_gb=80, volume_in_gb=0, min_memory_in_gb=24, min_vcpu_count=4,
+                docker_args=f"bash -lc '{cmd}'",
+                env={"WANDB_API_KEY": WANDB_KEY, "WANDB_PROJECT": "delta-nla", "RUNPOD_API_KEY": runpod.api_key,
+                     "MODEL_TAG": model_tag, "HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTHONUNBUFFERED": "1", "KEEP_POD": "1" if a.keep else "0"},
+            )
+            print("launched on", gpu, cloud); break
+        except runpod.error.QueryError as e:
+            print("unavailable:", gpu, cloud, "-", str(e)[:80])
+    if pod is None:
+        sys.exit("no GPU available")
+    print(json.dumps({k: pod.get(k) for k in ("id", "name", "desiredStatus", "costPerHr", "machineId")}, indent=1))
     print("POD_ID", pod["id"])
 
 
