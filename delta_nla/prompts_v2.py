@@ -6,8 +6,8 @@ from .prompts import render_evidence
 SYSTEM = """You are an interpretability tool. You are shown text that was provided to a large language model, with the last token in double square brackets, and information about how the model's internal state changed between two adjacent layers at that last token. The bracketed token is the current position: the one whose transition you are describing; nothing after it exists yet. Keep in mind that LLM activations can be very noisy, and it might not be clear how the provided information relates to the context. Keep in mind that the logit lens often tends to indicate the model's internal thoughts, and not what the model is actually planning to output at the current token.
 
 How to read the information, in order of trust:
-1. CAUSAL EFFECT ON THE EVENTUAL OUTPUT: how the eventual output differs with and without this change ("gains" rose because of it, "loses" fell). This is the primary basis for your explanation. Its labels are clues to a topic, entity, relation or judgement being worked on; paraphrase a label into a concept only when its referent is clear from the text, otherwise omit it. Never fuse separate labels into a relation that neither the text nor the lists state (if the labels are "care", "players" and "priority", do not assert that care for the players was the priority; say what gains and what recedes). Translate a non-English label when its meaning is unambiguous, without embellishing it. It is split into the part that came from gathering earlier text and the part recalled in place.
-2. EARLIER TEXT DRAWN ON: earlier positions whose content fed the change (offset = how many tokens back; share = fraction). Mention an earlier passage only when it explains what gained or lost weight. Let attn_share govern the wording: below 0.35 the change came mainly from internal recall (say so, and do not imply retrieval); 0.35-0.65 it came partly from earlier text and partly from recall; above 0.65 it came mainly from earlier text. A high sink_frac likewise points to recall rather than retrieval.
+1. CAUSAL EFFECT ON THE EVENTUAL OUTPUT: how the eventual output differs with and without this change ("gains" rose because of it, "loses" fell). This is the primary basis for your explanation. Its labels are clues to a topic, entity, relation or judgement being worked on; paraphrase a label into a concept only when its referent is clear from the text, otherwise omit it. Never fuse separate labels into a relation that neither the text nor the lists state (if the labels are "care", "players" and "priority", do not assert that care for the players was the priority; say what gains and what recedes). Translate a non-English label when its meaning is unambiguous, without embellishing it. It is also split by which sub-part of the block produced it: the attention output (which mixes in earlier positions) versus the MLP output (computed in place from the current state). Treat this as an attribution of the update, not as two independent experiments.
+2. EARLIER TEXT DRAWN ON: earlier positions whose content fed the change (offset = how many tokens back; share = fraction). Mention an earlier passage only when it explains what gained or lost weight. Let attn_share govern the wording: below 0.35 the change came mainly from internal recall (say so, and do not imply retrieval); 0.35-0.65 it came partly from earlier text and partly from recall; above 0.65 it came mainly from earlier text. A high sink_mass (share of attention probability on the first, content-free token) likewise points to recall rather than retrieval.
 3. WHAT THE INTERNAL READING MOVES TOWARD / AWAY FROM: what the state most resembles when read directly, before versus after. This often reflects associations being held in mind rather than plans. Use it to refine the causal picture when it agrees; when it conflicts, keep only the shared theme. A strong shift here cannot outweigh an empty causal effect.
 4. RAW CHANGE READING: noisy; use only as corroboration.
 MAGNITUDE gives two separate things. rel_norm_pct is the size of the internal movement (rank among this layer's changes); kl_pct is its consequence for the eventual output. Describe them separately when they disagree: a large movement with low consequence is "a substantial internal shift that barely alters the overall line of thought"; a small movement with high consequence is "a small but decisive adjustment". Thresholds: below 20 = faint/minor; 20-60 = moderate; 60-85 = substantial; above 85 = strong. attn_share is the fraction of the change that came from gathering earlier text rather than recall in place.
@@ -58,8 +58,8 @@ def content_token(tok: str) -> bool:
         return True  # CJK: usually a whole word
     if _re.fullmatch(r"\d+", s):
         return True  # digits carry quantity thoughts (kept; the prompt says how to talk about them)
-    if not _re.search(r"[A-Za-zÀ-ɏЀ-ӿ]", s):
-        return False  # punctuation
+    if not any(ch.isalpha() for ch in s):
+        return False  # punctuation / symbols (any script counts as content)
     if len(s) < 3:
         return False
     if not tok.startswith(" ") and not s[0].isupper():
@@ -102,8 +102,8 @@ def render_thought_view(ev: dict) -> str:
     L.append(f"  gains: {_tl(e['up'])}")
     L.append(f"  loses: {_tl(e['down'])}")
     ea, em = eff["attn"], eff["mlp"]
-    L.append(f"  from gathering earlier text -> gains: {_tl(ea['up'], 4)} | loses: {_tl(ea['down'], 4)}")
-    L.append(f"  from in-place recall        -> gains: {_tl(em['up'], 4)} | loses: {_tl(em['down'], 4)}")
+    L.append(f"  attention part of the update -> gains: {_tl(ea['up'], 4)} | loses: {_tl(ea['down'], 4)}")
+    L.append(f"  MLP part of the update       -> gains: {_tl(em['up'], 4)} | loses: {_tl(em['down'], 4)}")
     L.append("")
     L.append(f"WHAT THE INTERNAL READING MOVES TOWARD: {_tl(lens['shift_up'])}")
     L.append(f"WHAT IT MOVES AWAY FROM: {_tl(lens['shift_down'])}")
@@ -113,7 +113,7 @@ def render_thought_view(ev: dict) -> str:
         srcs = "; ".join(f"{s['tok'].strip()!r} ({s['offset']} back, share {s['frac']}) in \"{s['snippet']}\"" for s in src["top"][:4])
     else:
         srcs = "(no informative source)"
-    L.append(f"EARLIER TEXT DRAWN ON: {srcs}; sink_frac={src['sink_frac']}")
+    L.append(f"EARLIER TEXT DRAWN ON: {srcs}; sink_mass={src.get('sink_mass', src['sink_frac'])}")
     return "\n".join(L)
 
 
@@ -125,7 +125,7 @@ def build_messages(ev: dict) -> list[dict]:  # noqa: F811  (overrides the versio
 BANNED_RE = _re.compile(r"""(?ix)\b(model|models|logit|logits|completion|completions|continuation|continuations|token|tokens|layer|layers|
     attention\s+(head|heads|weight|weights|source|sources|pattern|patterns)|probabilit(y|ies)|update|representation|vector|noisy|evidence|signal|grammar|grammatical|punctuation|plural|singular|
     connective|phrase|phrasing|numeral|digit|digits|spelling|surname|suffix|prefix|subword|the\s+next\s+word|comes\s+next|predict\w*|output|outputs)\b""")
-QUOTE_RE = _re.compile(r"""["“”'‘’][^"“”'‘’]{1,30}["“”'‘’]""")
+QUOTE_RE = _re.compile(r"""(?<![A-Za-z])["“”'‘’][^"“”'‘’]{1,30}["“”'‘’](?![A-Za-z])""")  # ignores apostrophes inside words
 
 
 def violations(text: str) -> list[str]:

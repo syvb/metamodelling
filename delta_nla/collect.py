@@ -110,7 +110,8 @@ def run_tail(model, n: int, hidden: torch.Tensor, kwargs: dict, positions: list[
         if isinstance(h, tuple):
             h = h[0]
     h = model.model.norm(h[:, positions, :])
-    logits = model.lm_head(h).float()
+    # fp32 unembedding: bf16 logits quantise log-prob differences to ~1/16 nat, which swamps small causal effects
+    logits = F.linear(h.float(), model.lm_head.weight.float())
     return F.log_softmax(logits, dim=-1)
 
 
@@ -204,6 +205,8 @@ def main():
     cap = Capture()
     handles = install_hooks(model, layers, cap)
 
+    if (out / "records.jsonl").exists() and (out / "records.jsonl").stat().st_size > 0 and not args.skip_docs:
+        raise SystemExit(f"{out} already has records; use a new --out or --skip-docs to avoid duplicate doc ids")
     docs_f = open(out / "docs.jsonl", "a")
     meta_f = open(out / "records.jsonl", "a")
     shard: dict[str, list] = {"X": [], "d": [], "d_attn": [], "d_mlp": []}
@@ -253,7 +256,7 @@ def main():
             doc_id = str(doc_i)
         else:
             positions = sorted(random.sample(range(args.min_pos, S), min(args.positions_per_doc, S - args.min_pos)))
-            doc_id = f"d{doc_i}"
+            doc_id = f"d{doc_i + args.skip_docs}"
         docs_f.write(json.dumps({"doc_id": doc_id, "ids": ids.tolist(), "start": start, "src_index": doc_i, "text": text if args.prompts_file else None}) + "\n")
 
         for n in layers:
@@ -265,19 +268,24 @@ def main():
                 rel_err = ((hs[n + 1][0].float() - Y_all).norm(dim=-1) / Y_all.norm(dim=-1)).max().item()
                 if rel_err > 2e-2:  # bf16 rounding alone gives ~3e-3; the stale-capture bug gave ~1e-1
                     raise RuntimeError(f"layer {n}: hs[n+1] != X+d_attn+d_mlp (max rel err {rel_err:.3g}); captures are stale")
-            # ablation batch: for each position, 3 variants (remove all / remove attn / remove mlp)
+            # ablation batch: for each position, 4 rows (unablated control / remove all / remove attn / remove mlp).
+            # Seed from HF's own bf16 residual so the control row reproduces the clean forward exactly; the
+            # reference log-probs come from that control row, so the only difference between rows is the ablation.
             P = len(positions)
-            hid = Y_all.to(dtype).unsqueeze(0).repeat(3 * P, 1, 1)
+            base_hid = hs[n + 1][0] if n + 1 < L else Y_all.to(dtype)
+            hid = base_hid.to(dtype).unsqueeze(0).repeat(4 * P, 1, 1)
             for j, t in enumerate(positions):
-                hid[3 * j + 0, t] = X_all[t].to(dtype)
-                hid[3 * j + 1, t] = (X_all[t] + d_mlp_all[t]).to(dtype)
-                hid[3 * j + 2, t] = (X_all[t] + d_attn_all[t]).to(dtype)
-            abl_lp = run_tail(model, n, hid, cap.next_kwargs.get(n, {}), positions)  # [3P, P, V]
+                hid[4 * j + 1, t] = X_all[t].to(dtype)
+                hid[4 * j + 2, t] = (X_all[t] + d_mlp_all[t]).to(dtype)
+                hid[4 * j + 3, t] = (X_all[t] + d_attn_all[t]).to(dtype)
+            abl_lp = run_tail(model, n, hid, cap.next_kwargs.get(n, {}), positions)  # [4P, P, V]
             for j, t in enumerate(positions):
                 X = X_all[t]; da = d_attn_all[t]; dm = d_mlp_all[t]; d = da + dm
+                if not (torch.isfinite(X).all() and torch.isfinite(d).all()) or X.abs().max() > 6e4:
+                    raise RuntimeError(f"{doc_id} t={t} L={n}: non-finite or fp16-overflowing activation")
                 rec_id = f"{doc_id}_t{t}_L{n}"
-                true_lp = true_lp_all[t]
-                eff = {name: effect_summary(true_lp, abl_lp[3 * j + v, j]) for v, name in enumerate(["all", "attn", "mlp"])}
+                true_lp = abl_lp[4 * j + 0, j]
+                eff = {name: effect_summary(true_lp, abl_lp[4 * j + 1 + v, j]) for v, name in enumerate(["all", "attn", "mlp"])}
                 src = attention_sources(model, n, t, cap.attn_w[n], cap.v[n])
                 nX, nd, na, nm = X.norm().item(), d.norm().item(), da.norm().item(), dm.norm().item()
                 rec = {

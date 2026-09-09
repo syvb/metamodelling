@@ -154,7 +154,8 @@ def main():
                 },
                 "lens": {k: ([{kk: (sig(vv) if isinstance(vv, float) else vv) for kk, vv in x.items() if kk in ("tok", "p", "p_X", "p_Y")} for x in val] if isinstance(val, list) else round(val, 3)) for k, val in lz.items()},
                 "effect": eff,
-                "sources": {"top": sources[:5], "sink_frac": round(src["sink_frac"], 3), "self_frac": round(src["self_frac"], 3)},
+                "sources": {"top": sources[:5], "sink_frac": round(src["sink_frac"], 3), "self_frac": round(src["self_frac"], 3),
+                            "sink_mass": round(src.get("sink_mass", 0.0), 3), "self_mass": round(src.get("self_mass", 0.0), 3)},
                 "model_top": [{"tok": tokstr(x["id"]), "p": sig(x["p"])} for x in r["true_top"][:5]],
             }
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
