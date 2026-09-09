@@ -63,7 +63,15 @@ def main():
     layers = [int(x) for x in args.layers.split(",")]
     pairs = load_pairs(args.evidence, args.descriptions, args.raw, layers, use_templates=args.templates, limit=args.limit)
     train, val = split_by_doc(pairs)
-    norm = TargetNorm(train); alpha = act_scale(train, args.alpha_q)
+    norm = TargetNorm(train, mode="unit"); alpha = act_scale(train, args.alpha_q)
+    # fixed per-layer derangement of val records for the shuffled-activation control (never same doc when avoidable)
+    shuf_partner = {}
+    for n in layers:
+        vs = [p for p in val if p.layer == n]; rng_ = random.Random(123)
+        for _ in range(50):
+            perm = vs[:]; rng_.shuffle(perm)
+            if all(a.doc != b.doc for a, b in zip(vs, perm)): break
+        for a, b in zip(vs, perm): shuf_partner[a.id] = b
     n_layers_total = json.loads(open(args.evidence).readline())["n_layers"]
     print(f"train {len(train)} val {len(val)} layers {layers} alpha {alpha}", flush=True)
     dtype = torch.bfloat16 if args.device == "cuda" else torch.float32
@@ -79,11 +87,10 @@ def main():
         import wandb; wb = wandb.init(project=args.wandb, job_type="train_av", config=vars(args))
 
     def vecs(ps, shuffle=False):
-        xs = np.stack([p.X / (np.linalg.norm(p.X) + 1e-6) * alpha[p.layer] for p in ps])
-        dn = np.stack([norm.encode(p.d, p.layer) for p in ps]); dn = dn / (np.linalg.norm(dn, axis=1, keepdims=True) + 1e-6) * np.array([alpha[p.layer] for p in ps])[:, None]
-        if shuffle:
-            perm = np.roll(np.arange(len(ps)), 1); xs, dn = xs[perm], dn[perm]
-        return torch.from_numpy(xs).to(args.device), torch.from_numpy(dn).to(args.device)
+        src = [shuf_partner.get(p.id, p) for p in ps] if shuffle else ps
+        xs = np.stack([q.X / (np.linalg.norm(q.X) + 1e-6) * alpha[q.layer] for q in src])
+        dn = np.stack([norm.encode(q.d, q.layer) * alpha[q.layer] for q in src])  # encode() is unit-norm here
+        return torch.from_numpy(xs.astype(np.float32)).to(args.device), torch.from_numpy(dn.astype(np.float32)).to(args.device)
 
     def batchify(ps, shuffle=False):
         prompts = [build_prompt(p.layer, n_layers_total) for p in ps]
@@ -118,7 +125,8 @@ def main():
         enc = tok(prompts, return_tensors="pt", padding=True).to(args.device)
         x, d = vecs(ps)
         emb = model.embed(enc.input_ids, x, d, mark_x_id, mark_d_id)
-        out = model.lm.generate(inputs_embeds=emb, attention_mask=enc.attention_mask, max_new_tokens=max_new, do_sample=temperature > 0, temperature=temperature if temperature > 0 else None, pad_token_id=tok.pad_token_id)
+        out = model.lm.generate(inputs_embeds=emb, attention_mask=enc.attention_mask, max_new_tokens=max_new, do_sample=temperature > 0,
+                                temperature=temperature if temperature > 0 else None, top_k=0, top_p=1.0, pad_token_id=tok.pad_token_id)
         tok.padding_side = "right"; model.train()
         return [tok.decode(o, skip_special_tokens=True).strip() for o in out]
 
@@ -139,7 +147,7 @@ def main():
             if step >= steps_total: break
     res = evaluate(); print("final", json.dumps({k: round(v, 4) for k, v in res.items()}), flush=True)
     model.lm.save_pretrained(args.out)
-    torch.save({"proj_x": model.proj_x.state_dict(), "proj_d": model.proj_d.state_dict(), "norm": norm.state_dict(), "alpha": alpha, "args": vars(args), "final": res}, f"{args.out}/av_extra.pt")
+    torch.save({"proj_x": model.proj_x.state_dict(), "proj_d": model.proj_d.state_dict(), "norm": norm.state_dict(), "alpha": alpha, "args": vars(args), "final": res, "val_ids": [p.id for p in val]}, f"{args.out}/av_extra.pt")
     samples = []
     vs = val[: args.n_gen]
     for i in range(0, len(vs), args.bs):

@@ -1,6 +1,6 @@
 """Warm-start pairs for Delta-NLA SFT: (layer, X, d, description) with doc-level splits and per-layer target normalisation."""
 from __future__ import annotations
-import glob, json, random
+import glob, json, random, zlib
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
@@ -23,7 +23,7 @@ def load_pairs(evidence: str, descriptions: str, raw: str, layers: list[int] | N
     texts = {}
     if use_templates:
         from .templates import describe
-        texts = {i: describe(e, random.Random(hash(i) & 0xFFFF)) for i, e in ev.items()}
+        texts = {i: describe(e, random.Random(zlib.crc32(i.encode()))) for i, e in ev.items()}
     else:
         for l in open(descriptions):
             d = json.loads(l)
@@ -51,9 +51,12 @@ def split_by_doc(pairs: list[Pair], val_frac: float = 0.1, seed: int = 0):
 
 
 class TargetNorm:
-    """Per-layer: subtract mean d, divide by scalar RMS so targets have unit RMS. FVE is computed about the mean."""
-    def __init__(self, train: list[Pair]):
-        self.mean, self.scale = {}, {}
+    """Per-layer target normalisation.
+    mode="rms":  y = (d - mean) / scalar_rms          (keeps relative norms)
+    mode="unit": y = (d - mean) / ||d - mean||         (direction only; the paper's convention, and the AV never sees ||d||)
+    FVE is always computed about the per-layer mean, in the normalised space used for training."""
+    def __init__(self, train: list[Pair], mode: str = "unit"):
+        self.mode = mode; self.mean, self.scale = {}, {}
         by = {}
         for p in train:
             by.setdefault(p.layer, []).append(p.d)
@@ -61,14 +64,27 @@ class TargetNorm:
             D = np.stack(ds); mu = D.mean(0)
             self.mean[n] = mu; self.scale[n] = float(np.sqrt(((D - mu) ** 2).mean()))
     def encode(self, d: np.ndarray, layer: int) -> np.ndarray:
-        return (d - self.mean[layer]) / self.scale[layer]
-    def decode(self, y: np.ndarray, layer: int) -> np.ndarray:
-        return y * self.scale[layer] + self.mean[layer]
+        c = d - self.mean[layer]
+        if self.mode == "unit":
+            return c / (np.linalg.norm(c) + 1e-6)
+        return c / self.scale[layer]
+    def target(self, d: np.ndarray, layer: int) -> np.ndarray:
+        """The vector FVE is computed against (normalised space, mean removed)."""
+        return self.encode(d, layer)
     def state_dict(self):
-        return {"mean": {n: torch.from_numpy(m) for n, m in self.mean.items()}, "scale": self.scale}
+        return {"mode": self.mode, "mean": {n: torch.from_numpy(m) for n, m in self.mean.items()}, "scale": self.scale}
     @classmethod
     def from_state_dict(cls, sd):
-        o = cls.__new__(cls); o.mean = {int(n): m.numpy() for n, m in sd["mean"].items()}; o.scale = {int(n): s for n, s in sd["scale"].items()}; return o
+        o = cls.__new__(cls); o.mode = sd.get("mode", "rms"); o.mean = {int(n): m.numpy() for n, m in sd["mean"].items()}; o.scale = {int(n): s for n, s in sd["scale"].items()}; return o
+
+
+def fve_norm(pred: np.ndarray, true: np.ndarray) -> float:
+    """FVE in normalised target space: 1 - sum||t - p||^2 / sum||t - mean_t||^2 (mean over the eval set)."""
+    return float(1 - ((true - pred) ** 2).sum() / ((true - true.mean(0)) ** 2).sum())
+
+
+def cosines(pred: np.ndarray, true: np.ndarray) -> float:
+    return float(np.mean(np.sum(pred * true, 1) / (np.linalg.norm(pred, axis=1) * np.linalg.norm(true, axis=1) + 1e-8)))
 
 
 def fve(pred: np.ndarray, true: np.ndarray, mean: np.ndarray) -> float:

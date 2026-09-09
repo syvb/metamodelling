@@ -50,7 +50,7 @@ def main():
                 "id": e["id"], "doc_id": e["doc_id"], "layer": e["layer"], "t": e["t"],
                 "split": "val" if e["doc_id"] in val_docs else "train",
                 "vectors": {"dir": args.raw, "id": e["id"]},
-                "template": describe(e, random.Random(hash(e["id"]) & 0xFFFF)),
+                "template": describe(e, random.Random(__import__("zlib").crc32(e["id"].encode()))),
                 "llm": d["description"] if d else None,
                 "llm_short": d["short"] if d else None,
                 "magnitude": e["magnitude"],

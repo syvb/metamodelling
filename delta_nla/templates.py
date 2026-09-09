@@ -4,7 +4,7 @@ These are deliberately plain and varied. They exist (a) as a cheap control / mix
 warm-start and (b) as a fallback when the LLM rewrite is unavailable.
 """
 from __future__ import annotations
-import random
+import random, zlib
 
 
 def q(tok: str) -> str:
@@ -41,7 +41,7 @@ def magnitude_word(rel_pct: float, rng: random.Random) -> str:
 
 
 def describe(ev: dict, rng: random.Random | None = None, max_items: int = 3) -> str:
-    rng = rng or random.Random(hash(ev["id"]) & 0xFFFF)
+    rng = rng or random.Random(zlib.crc32(ev["id"].encode()))
     m = ev["magnitude"]; eff = ev["effect"]["all"]; lens = ev["lens"]
     mag = magnitude_word(m["rel_norm_pct"], rng)
     def dedup(a, b):
