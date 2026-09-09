@@ -172,12 +172,17 @@ def main():
     ap.add_argument("--wandb", default="")
     ap.add_argument("--save-unembed", action="store_true", help="save lm_head + final norm weights for offline lens")
     ap.add_argument("--prompts-file", default="", help="jsonl of {id, text}: record the last --last-k positions of each prompt instead of sampling a corpus")
+    ap.add_argument("--spans", default="", help="comma list a-b: record multi-block span updates X_b - X_a (blocks a..b-1) instead of single blocks")
     ap.add_argument("--last-k", type=int, default=2)
     args = ap.parse_args()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
     random.seed(args.seed); torch.manual_seed(args.seed)
-    layers = None if args.layers == "all" else [int(x) for x in args.layers.split(",")]
+    spans = [tuple(int(x) for x in sp.split("-")) for sp in args.spans.split(",")] if args.spans else []
+    if spans:
+        layers = sorted({l for a, b in spans for l in range(a, b)})
+    else:
+        layers = None if args.layers == "all" else [int(x) for x in args.layers.split(",")]
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     dtype = getattr(torch, args.dtype)
 
@@ -259,6 +264,66 @@ def main():
             doc_id = f"d{doc_i + args.skip_docs}"
         docs_f.write(json.dumps({"doc_id": doc_id, "ids": ids.tolist(), "start": start, "src_index": doc_i, "text": text if args.prompts_file else None}) + "\n")
 
+        if spans:
+            for (a, b) in spans:
+                X_all = hs[a][0].float(); Y_all = hs[b][0].float(); d_all = Y_all - X_all
+                # per-block attention/mlp parts summed over the span
+                d_attn_all = sum(cap.attn_out[m].float() for m in range(a, b)); d_mlp_all = sum(cap.mlp_out[m].float() for m in range(a, b))
+                rel_err = ((d_all - (d_attn_all + d_mlp_all)).norm(dim=-1) / (d_all.norm(dim=-1) + 1e-6)).max().item()
+                if rel_err > 5e-2:
+                    raise RuntimeError(f"span {a}-{b}: X_b - X_a != sum of block updates (max rel err {rel_err:.3g})")
+                P = len(positions)
+                base_hid = hs[b][0].to(dtype)
+                hid = base_hid.unsqueeze(0).repeat(2 * P, 1, 1)
+                for j, t in enumerate(positions):
+                    hid[2 * j + 1, t] = X_all[t].to(dtype)   # remove the whole span's contribution at t
+                all_pos = list(range(S))
+                lp = run_tail(model, b - 1, hid, cap.next_kwargs.get(b - 1, {}), all_pos)  # [2P, S, V] (tail from block b)
+                for j, t in enumerate(positions):
+                    X = X_all[t]; d = d_all[t]; da = d_attn_all[t]; dm = d_mlp_all[t]
+                    if not (torch.isfinite(X).all() and torch.isfinite(d).all()) or X.abs().max() > 6e4:
+                        raise RuntimeError(f"{doc_id} t={t} span={a}-{b}: non-finite or fp16-overflowing activation")
+                    rec_id = f"{doc_id}_t{t}_S{a}-{b}"
+                    true_lp = lp[2 * j, t]; abl_lp = lp[2 * j + 1, t]
+                    eff = {"all": effect_summary(true_lp, abl_lp)}
+                    # effect on LATER positions: KL summed over t+1..S-1 (the update read as keys/values by later tokens)
+                    if t + 1 < S:
+                        pt = lp[2 * j, t + 1:].exp(); later_kl = float((pt * (lp[2 * j, t + 1:] - lp[2 * j + 1, t + 1:])).sum(-1).sum())
+                    else:
+                        later_kl = 0.0
+                    eff["all"]["later_kl_sum"] = later_kl; eff["all"]["later_positions"] = int(S - 1 - t)
+                    # attention sources aggregated over the span's blocks (each block's scores normalised, then summed)
+                    agg = None; sink_m = 0.0; self_m = 0.0
+                    for m in range(a, b):
+                        src_m = attention_sources(model, m, t, cap.attn_w[m], cap.v[m], topk=t + 1)
+                        vec = torch.zeros(t + 1)
+                        for x in src_m["top"]: vec[x["s"]] = x["frac"]
+                        agg = vec if agg is None else agg + vec
+                        sink_m += src_m["sink_mass"]; self_m += src_m["self_mass"]
+                    agg = agg / (b - a); topv = torch.topk(agg, min(8, t + 1))
+                    src = {"top": [{"s": int(si), "frac": float(fv), "mass": 0.0} for fv, si in zip(topv.values.tolist(), topv.indices.tolist())],
+                           "sink_frac": float(agg[0]), "self_frac": float(agg[t]), "sink_mass": sink_m / (b - a), "self_mass": self_m / (b - a)}
+                    nX, nd, na, nm = X.norm().item(), d.norm().item(), da.norm().item(), dm.norm().item()
+                    rec = {"id": rec_id, "doc_id": doc_id, "t": t, "layer": a, "span": [a, b], "n_layers": L,
+                           "norm_X": nX, "norm_d": nd, "norm_d_attn": na, "norm_d_mlp": nm,
+                           "cos_d_X": float(F.cosine_similarity(d, X, dim=0)), "cos_attn_mlp": float(F.cosine_similarity(da, dm, dim=0)),
+                           "cos_Y_X": float(F.cosine_similarity(X + d, X, dim=0)),
+                           "true_top": [{"id": int(i), "p": float(true_lp[i].exp())} for i in torch.topk(true_lp, 8).indices.tolist()],
+                           "effect": eff, "attn_sources": src}
+                    meta_f.write(json.dumps(rec) + "\n")
+                    shard["X"].append(X.cpu().numpy()); shard["d"].append(d.cpu().numpy())
+                    shard["d_attn"].append(da.cpu().numpy()); shard["d_mlp"].append(dm.cpu().numpy())
+                    shard_ids.append(rec_id); n_rec += 1
+                if len(shard_ids) >= args.shard_size:
+                    flush()
+            n_doc += 1
+            if n_doc % 10 == 0:
+                el = time.time() - t0
+                log(f"docs={n_doc} records={n_rec} {el/n_doc:.2f}s/doc")
+                if wb:
+                    wb.log({"docs": n_doc, "records": n_rec, "sec_per_doc": el / n_doc})
+            meta_f.flush(); docs_f.flush()
+            continue
         for n in layers:
             X_all = hs[n][0].float()
             d_attn_all = cap.attn_out[n].float(); d_mlp_all = cap.mlp_out[n].float()
@@ -313,7 +378,8 @@ def main():
                 wb.log({"docs": n_doc, "records": n_rec, "sec_per_doc": el / n_doc})
         meta_f.flush(); docs_f.flush()
     flush()
-    torch.save({n: (sum_d[n] / max(1, n_rec // len(layers))).float() for n in layers}, out / "mean_d.pt")
+    if not spans:
+        torch.save({n: (sum_d[n] / max(1, n_rec // len(layers))).float() for n in layers}, out / "mean_d.pt")
     log(f"done: docs={n_doc} records={n_rec} in {time.time()-t0:.0f}s")
     if wb:
         art = __import__("wandb").Artifact(f"raw-{args.model.split('/')[-1]}", type="raw-evidence")

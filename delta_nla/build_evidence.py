@@ -110,6 +110,8 @@ def main():
             cur = tokstr(ids[t])
             eff = {}
             for name, e in r["effect"].items():
+                if not isinstance(e, dict) or "up" not in e:
+                    continue
                 def fmt(lst):
                     out = []
                     for x in lst:
@@ -142,8 +144,10 @@ def main():
                 sources.append({"offset": t - s["s"], "tok": st, "snippet": snippet(tok, ids, s["s"], t),
                                 "frac": round(s["frac"], 3), "mass": round(s["mass"], 3)})
             na, nm = r["norm_d_attn"], r["norm_d_mlp"]
+            if "all" in eff and "later_kl_sum" in r["effect"]["all"]:
+                eff["all"]["later_kl_sum"] = round(r["effect"]["all"]["later_kl_sum"], 4); eff["all"]["later_positions"] = r["effect"]["all"]["later_positions"]
             out = {
-                "id": r["id"], "doc_id": r["doc_id"], "t": t, "layer": n, "n_layers": r["n_layers"],
+                "id": r["id"], "doc_id": r["doc_id"], "t": t, "layer": n, "n_layers": r["n_layers"], **({"span": r["span"]} if "span" in r else {}),
                 "depth_frac": round(n / r["n_layers"], 2),
                 "context": ctx, "current_token": cur,
                 "magnitude": {

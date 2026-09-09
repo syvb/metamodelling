@@ -91,7 +91,10 @@ def render_thought_view(ev: dict) -> str:
     if ctx.endswith(cur):
         ctx = ctx[: len(ctx) - len(cur)] + f"[[{cur}]]"
     L = []
-    L.append(f"DEPTH: layer {ev['layer']} of {ev['n_layers']} ({ev['depth_frac']:.0%} through the network)")
+    if ev.get("span"):
+        a, b = ev["span"]; L.append(f"DEPTH: the change across blocks {a} to {b - 1} (of {ev['n_layers']}), i.e. from the state entering block {a} to the state entering block {b}")
+    else:
+        L.append(f"DEPTH: layer {ev['layer']} of {ev['n_layers']} ({ev['depth_frac']:.0%} through the network)")
     L.append("TEXT (last token in double brackets):")
     L.append(ctx)
     L.append("")
@@ -101,9 +104,12 @@ def render_thought_view(ev: dict) -> str:
     L.append(f"CAUSAL EFFECT ON THE EVENTUAL OUTPUT (whole change; kl={e['kl']}):")
     L.append(f"  gains: {_tl(e['up'])}")
     L.append(f"  loses: {_tl(e['down'])}")
-    ea, em = eff["attn"], eff["mlp"]
-    L.append(f"  attention part of the update -> gains: {_tl(ea['up'], 4)} | loses: {_tl(ea['down'], 4)}")
-    L.append(f"  MLP part of the update       -> gains: {_tl(em['up'], 4)} | loses: {_tl(em['down'], 4)}")
+    if "later_kl_sum" in e:
+        L.append(f"  effect on how LATER positions are processed (summed KL over {e['later_positions']} later tokens): {e['later_kl_sum']}")
+    if "attn" in eff and "mlp" in eff:
+        ea, em = eff["attn"], eff["mlp"]
+        L.append(f"  attention part of the update -> gains: {_tl(ea['up'], 4)} | loses: {_tl(ea['down'], 4)}")
+        L.append(f"  MLP part of the update       -> gains: {_tl(em['up'], 4)} | loses: {_tl(em['down'], 4)}")
     L.append("")
     L.append(f"WHAT THE INTERNAL READING MOVES TOWARD: {_tl(lens['shift_up'])}")
     L.append(f"WHAT IT MOVES AWAY FROM: {_tl(lens['shift_down'])}")
