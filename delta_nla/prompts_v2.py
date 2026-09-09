@@ -25,7 +25,8 @@ Rules:
 - Use impersonal active phrasing ("Emphasis moves from... to...", "Focus narrows to...", "The idea of ... gains weight over ..."); vary the opening; never refer to the model, the network or "it" as an agent thinking in the third person.
 - Do not quote individual tokens and do not talk about words as words. Describe referents: the person, place, quantity, event, relation or judgement. Obvious aliases of one entity may be merged when the text supports it, but never extend a partial name using your own knowledge unless the text confirms it.
 - You must NEVER refer to potential completions, nor to the type, form or structure of upcoming text: no grammar, punctuation, plurals, subjects, connectives, phrases, spelling, numerals, or which value or name "comes next". Describe the thought behind such a choice instead (the count of remaining tablespoons of oil, not the numeral; the identity of the co-star, not the surname).
-- Quantities that are themselves the subject of the thinking (a count, an intermediate result, a product, a total) may be named in words as quantities, e.g. "the count of legs settles on four" or "the product of seven and twelve comes into view", but never framed as what will be written. In arithmetic, a single digit in the causal lists is only the leading digit of a multi-digit answer; do not read individual digits as quantities. Take the quantities and operations being thought about from the internal-reading lists and the text instead.
+- Quantities that are themselves the subject of the thinking (a count, an intermediate result, a product, a total) may be named in words as quantities, e.g. "the count of legs settles on four" or "the product of seven and twelve comes into view", but never framed as what will be written, and ONLY when that quantity appears in the internal-reading lists or the text. Never state the result of a calculation from your own arithmetic or knowledge: if the lists say "four" and "sixteen", those are the quantities in play even if you believe the true answer differs.
+- When the only legible information is that a numeric answer is in flux (a note to that effect in the causal lists, and nothing distinctive in the internal reading), say plainly in two sentences that the answer is being worked out with no specific quantity or operation yet legible, and name only the faint theme the text supplies. Do not invent a reasoning step.
 - Stay grounded: every entity, concept or relation you mention must appear in the provided text (including the quoted earlier passages) or be a plain paraphrase of a listed label whose referent is clear. Never add specifics from world knowledge. Translate a non-English label only when its meaning is unambiguous and relevant; otherwise ignore it. Ignore corrupted fragments and unrelated stray labels.
 - Do not hedge or express uncertainty: if unsure, give your best guess confidently. Describe size only through the calibrated terms above.
 - Do not discuss the instrumentation or the measurement process, and do not use LLM terminology ("model", "logit", "token", "layer", "completion", "probability", "update", "vector", "representation"). "Attention" in its everyday sense is fine.
@@ -67,8 +68,17 @@ def content_token(tok: str) -> bool:
 
 
 def _tl(items, n=6):
-    out = [x["tok"].strip() for x in items if content_token(x["tok"])]
-    return ", ".join(out[:n]) if out else "(nothing distinctive)"
+    """Render a token list for the writer. Digit tokens are only the leading digit of a numeric answer, so
+    when they dominate a list they are collapsed into a plain statement instead of being shown."""
+    toks = [x["tok"].strip() for x in items if content_token(x["tok"])]
+    digits = [t for t in toks if _re.fullmatch(r"\d+", t)]
+    words = [t for t in toks if not _re.fullmatch(r"\d+", t)]
+    parts = []
+    if words:
+        parts.append(", ".join(words[:n]))
+    if digits:
+        parts.append("[leading digit of a numeric answer in flux; not informative about quantities]")
+    return "; ".join(parts) if parts else "(nothing distinctive)"
 
 
 def render_thought_view(ev: dict) -> str:
