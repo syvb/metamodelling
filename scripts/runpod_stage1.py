@@ -14,7 +14,7 @@ ap.add_argument("--desc", default="descriptions_v34.jsonl"); ap.add_argument("--
 a = ap.parse_args()
 cmd = (
     "/start.sh >/dev/null 2>&1 & mkdir -p /workspace && exec > >(tee -a /workspace/boot.log) 2>&1; set -x; cd /workspace && rm -rf metamodelling && "
-    f"git clone -q {REPO} && cd metamodelling && pip uninstall -y -q torchvision torchaudio; pip install -q -r requirements-pod.txt peft 2>&1 | tail -2 && "
+    f"git clone -q {REPO} && cd metamodelling && pip uninstall -y -q torchvision torchaudio; pip install -q --index-url https://download.pytorch.org/whl/cu126 torch==2.8.* 2>&1 | tail -1; pip install -q -r requirements-pod.txt 2>&1 | tail -2 && "
     "python scripts/pull_hf_data.py && "
     f"LAYERS={a.layers} EPOCHS={a.epochs} bash scripts/stage1_pod.sh data/raw/{a.desc}; echo FINISHED; sleep infinity"
 )

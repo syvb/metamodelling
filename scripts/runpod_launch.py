@@ -19,7 +19,7 @@ def launch(a):
     cmd = (
         "/start.sh >/dev/null 2>&1 & mkdir -p /workspace && exec > >(tee -a /workspace/boot.log) 2>&1; "
         "set -x; cd /workspace && rm -rf metamodelling && git clone -q %s && cd metamodelling && "
-        "pip uninstall -y -q torchvision torchaudio; pip install -q -r requirements-pod.txt 2>&1 | tail -2 && pip list 2>/dev/null | grep -e ^torch -e ^transformers && nvidia-smi --query-gpu=name,memory.total --format=csv && "
+        "pip uninstall -y -q torchvision torchaudio; pip install -q --index-url https://download.pytorch.org/whl/cu126 torch==2.8.* 2>&1 | tail -1; pip install -q -r requirements-pod.txt 2>&1 | tail -2 && pip list 2>/dev/null | grep -e ^torch -e ^transformers && nvidia-smi --query-gpu=name,memory.total --format=csv && "
         "timeout %dh python -m delta_nla.collect --model %s --layers %s --n-docs %d --positions-per-doc %d --max-len %d "
         "--out %s --save-unembed --seed %d --wandb delta-nla --shard-size 2500 %s && "
         "python -m delta_nla.build_evidence --raw %s --out %s/evidence.jsonl --model %s --device cuda && "
