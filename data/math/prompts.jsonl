@@ -1,0 +1,16 @@
+{"id": "mul_6x7", "text": "Q: What is 6 times 7?\nA: ", "answer": "42", "hops": 1}
+{"id": "add_23_48", "text": "Q: What is 23 + 48?\nA: ", "answer": "71", "hops": 1}
+{"id": "paren_3p5_x4", "text": "Q: What is (3 + 5) times 4?\nA: ", "answer": "32", "hops": 2}
+{"id": "spider_sq", "text": "Q: What is the square of the number of legs on a spider?\nA: ", "answer": "64", "hops": 2}
+{"id": "days_x_months", "text": "Q: What is the number of days in a week multiplied by the number of months in a year?\nA: ", "answer": "84", "hops": 3}
+{"id": "dozen_eggs", "text": "Q: If a dozen eggs cost 3 dollars, how many dollars do 4 dozen eggs cost?\nA: ", "answer": "12", "hops": 2}
+{"id": "largest_2digit_p1", "text": "Q: What is one more than the largest two-digit number?\nA: ", "answer": "100", "hops": 2}
+{"id": "alice_bob", "text": "Q: Alice has 5 apples and Bob has twice as many. How many apples do they have together?\nA: ", "answer": "15", "hops": 2}
+{"id": "half_day", "text": "Q: What is half of the number of hours in a day?\nA: ", "answer": "12", "hops": 2}
+{"id": "sum_1to4", "text": "Q: What is the sum of the first four positive integers?\nA: ", "answer": "10", "hops": 2}
+{"id": "minutes_3h", "text": "Q: How many minutes are in three hours?\nA: ", "answer": "180", "hops": 2}
+{"id": "eiffel_capital", "text": "Q: What is the capital of the country that contains the Eiffel Tower?\nA: ", "answer": "Paris", "hops": 2}
+{"id": "cube_side3", "text": "Q: A cube has sides of length 3. What is its volume?\nA: ", "answer": "27", "hops": 2}
+{"id": "train", "text": "Q: A train travels 60 miles per hour for 2 hours, then 30 miles per hour for 1 hour. How many miles does it travel in total?\nA: ", "answer": "150", "hops": 3}
+{"id": "age", "text": "Q: Tom is 3 years older than Sara. Sara is 10. In 5 years, how old will Tom be?\nA: ", "answer": "18", "hops": 2}
+{"id": "change", "text": "Q: A book costs 7 dollars. You pay with a 20 dollar bill. How many dollars of change do you get?\nA: ", "answer": "13", "hops": 1}
