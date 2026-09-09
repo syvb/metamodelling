@@ -50,12 +50,21 @@ def main():
         fm = Xa[tr].mean(0); _, _, V = np.linalg.svd(Xa[tr] - fm, full_matrices=False); P = V[:512]
         Z = (Xa - fm) @ P.T
         lin, _, _ = ridge_fit_eval(Z.astype(np.float32), D, tr, va, te, lams=(1e2, 1e3, 1e4, 1e5))
-        # lens: prob shift X_a -> X_b ; oracle text from it
+        # lens: prob shift X_a -> X_b, computed in batched chunks (one big matmul per chunk); oracle text from it
         texts = []; leg = 0
-        for k, p in enumerate(poss):
-            up, down = lens.prob_shift(torch.from_numpy(Xa[k]), torch.from_numpy(Xb[k]), k=6)
-            leg += bool(up) and up[0]["p_Y"] >= 0.05
-            texts.append("toward: " + " ".join(x["tok"].strip() for x in up) + ". away: " + " ".join(x["tok"].strip() for x in down))
+        W = lens.W_U; g = lens.g
+        for c0 in range(0, len(poss), 256):
+            xa = torch.from_numpy(Xa[c0:c0 + 256]); xb = torch.from_numpy(Xb[c0:c0 + 256])
+            la = (g * xa / torch.sqrt((xa ** 2).mean(-1, keepdim=True) + lens.eps)) @ W.T
+            lb = (g * xb / torch.sqrt((xb ** 2).mean(-1, keepdim=True) + lens.eps)) @ W.T
+            pa = torch.softmax(la, -1); pb = torch.softmax(lb, -1); diff = pb - pa
+            top_up = torch.topk(diff, 40, dim=-1); top_dn = torch.topk(-diff, 40, dim=-1)
+            for r in range(diff.shape[0]):
+                ups = [i for i in top_up.indices[r].tolist() if lens.display(i) is not None][:6]
+                dns = [i for i in top_dn.indices[r].tolist() if lens.display(i) is not None][:6]
+                leg += bool(ups) and float(pb[r, ups[0]]) >= 0.05
+                texts.append("toward: " + " ".join(lens.display(i).strip() for i in ups) + ". away: " + " ".join(lens.display(i).strip() for i in dns))
+            print(f"  span {a}->{b}: lens {min(c0 + 256, len(poss))}/{len(poss)}", flush=True)
         E = st.encode(texts, batch_size=64, normalize_embeddings=True, show_progress_bar=False).astype(np.float32)
         fve, cos, _ = ridge_fit_eval(E, D, tr, va, te)
         perm = np.random.default_rng(0).permutation(len(poss)); fs, _, _ = ridge_fit_eval(E[perm], D, tr, va, te)
