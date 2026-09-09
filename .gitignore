@@ -1,5 +1,8 @@
 .venv/
 data/
+!data/math/
+data/math/*
+!data/math/prompts.jsonl
 __pycache__/
 *.pyc
 wandb/

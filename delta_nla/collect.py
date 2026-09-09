@@ -263,7 +263,7 @@ def main():
             Y_all = X_all + d_attn_all + d_mlp_all
             if n + 1 < L:
                 rel_err = ((hs[n + 1][0].float() - Y_all).norm(dim=-1) / Y_all.norm(dim=-1)).max().item()
-                if rel_err > 1e-3:
+                if rel_err > 2e-2:  # bf16 rounding alone gives ~3e-3; the stale-capture bug gave ~1e-1
                     raise RuntimeError(f"layer {n}: hs[n+1] != X+d_attn+d_mlp (max rel err {rel_err:.3g}); captures are stale")
             # ablation batch: for each position, 3 variants (remove all / remove attn / remove mlp)
             P = len(positions)
