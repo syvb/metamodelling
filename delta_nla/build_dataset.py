@@ -72,8 +72,7 @@ def main():
             e = evmap[rid]; d = descs[rid]
             tbl.add_data(rid, e["layer"], e["context"][-120:], d["description"], d["short"], describe(e))
         wb.log({"samples": tbl})
-        art = wandb.Artifact("warmstart-dataset", type="dataset"); art.add_file(args.out); wb.log_artifact(art)
-        wb.finish()
+        wb.finish()  # the dataset file itself goes to Hugging Face, not wandb
 
 
 if __name__ == "__main__":

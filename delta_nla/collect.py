@@ -382,9 +382,7 @@ def main():
         torch.save({n: (sum_d[n] / max(1, n_rec // len(layers))).float() for n in layers}, out / "mean_d.pt")
     log(f"done: docs={n_doc} records={n_rec} in {time.time()-t0:.0f}s")
     if wb:
-        art = __import__("wandb").Artifact(f"raw-{args.model.split('/')[-1]}", type="raw-evidence")
-        art.add_dir(str(out))
-        wb.log_artifact(art); wb.finish()
+        wb.finish()  # metrics only: data goes to Hugging Face (scripts/pod_finish.py), never to wandb artifacts
     meta_f.close(); docs_f.close()
     os._exit(0)  # skip interpreter finalisation: datasets' streaming threads crash on shutdown
 

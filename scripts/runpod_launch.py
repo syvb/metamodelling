@@ -34,7 +34,7 @@ def launch(a):
                 name=f"delta-nla-{model_tag}", image_name=IMAGE, gpu_type_id=gpu, cloud_type=cloud, gpu_count=1,
                 container_disk_in_gb=80, volume_in_gb=0, min_memory_in_gb=24, min_vcpu_count=4, ports="22/tcp",
                 docker_args=f"bash -lc '{cmd}'",
-                env={"WANDB_API_KEY": WANDB_KEY, "WANDB_PROJECT": "delta-nla", "RUNPOD_API_KEY": runpod.api_key,
+                env={"WANDB_API_KEY": WANDB_KEY, "WANDB_PROJECT": "delta-nla", "RUNPOD_API_KEY": runpod.api_key, "HF_TOKEN": open(os.path.expanduser("~/.hf_token")).read().strip(),
                      "MODEL_TAG": model_tag, "HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTHONUNBUFFERED": "1", "KEEP_POD": "1" if a.keep else "0", "UPLOAD_VECTORS": "1" if a.prompts_file else "0"},
             )
             print("launched on", gpu, cloud); break

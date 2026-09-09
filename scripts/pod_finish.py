@@ -1,20 +1,18 @@
 """Run on the pod after collection: upload evidence.jsonl as a wandb artifact, then terminate the pod."""
-import os, sys, subprocess, time
-import wandb
+import os, sys, time, glob
+from huggingface_hub import HfApi
 raw = sys.argv[1] if len(sys.argv) > 1 else "data/raw"
-run = wandb.init(project=os.environ.get("WANDB_PROJECT", "delta-nla"), job_type="evidence")
-art = wandb.Artifact("evidence-" + os.environ.get("MODEL_TAG", "model"), type="evidence")
-import glob
-files = ["evidence.jsonl", "records.jsonl", "docs.jsonl", "mean_d.pt"]
-if os.environ.get("UPLOAD_VECTORS") == "1":
-    files += [os.path.basename(x) for x in glob.glob(os.path.join(raw, "vec_*.npz"))]
+sub = os.environ.get("HF_SUBDIR", "fineweb")
+api = HfApi(token=os.environ["HF_TOKEN"])
+repo = os.environ.get("HF_DATASET", "syvb/delta-nla-qwen3-8b-warmstart")
+api.create_repo(repo, repo_type="dataset", exist_ok=True)
+files = ["evidence.jsonl", "records.jsonl", "docs.jsonl", "mean_d.pt"] + [os.path.basename(x) for x in glob.glob(os.path.join(raw, "vec_*.npz"))]
 for f in files:
     p = os.path.join(raw, f)
     if os.path.exists(p):
-        art.add_file(p)
-run.log_artifact(art)
-run.finish()
-print("uploaded evidence artifact", flush=True)
+        api.upload_file(path_or_fileobj=p, path_in_repo=f"{sub}/{f}", repo_id=repo, repo_type="dataset", commit_message=f"pod upload {sub}/{f}")
+        print("uploaded", f"{sub}/{f}", flush=True)
+print("uploaded to HF", repo, sub, flush=True)
 pod_id = os.environ.get("RUNPOD_POD_ID")
 if pod_id and os.environ.get("RUNPOD_API_KEY") and os.environ.get("KEEP_POD") != "1":
     import runpod
