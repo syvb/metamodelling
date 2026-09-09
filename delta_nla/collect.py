@@ -273,7 +273,7 @@ def main():
                 # rounding alone exceeds any sensible tolerance), relative to the state norm
                 pos_t = torch.tensor(positions, device=d_all.device)
                 rel_err = ((d_all[pos_t] - (d_attn_all[pos_t] + d_mlp_all[pos_t])).norm(dim=-1) / (X_all[pos_t].norm(dim=-1) + 1e-6)).max().item()
-                if rel_err > 2e-2:
+                if rel_err > 1e-2 * (b - a):  # bf16 rounding accumulates over the span's blocks; stale captures give ~1e-1 per block
                     raise RuntimeError(f"span {a}-{b}: X_b - X_a != sum of block updates at sampled positions (max rel err {rel_err:.3g})")
                 P = len(positions)
                 base_hid = hs[b][0].to(dtype)
