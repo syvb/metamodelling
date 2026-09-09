@@ -86,7 +86,8 @@ def main():
             if not vs: continue
             P = np.stack([preds[p.id] for p in vs]); T = np.stack([ar_norm.target(p.d, p.layer) for p in vs])
             results[f"{name}/fve_L{n}"] = fve_norm(P, T); results[f"{name}/cos_L{n}"] = cosines(P, T)
-        results[f"{name}/fve_all"] = float(np.mean([v for k, v in results.items() if k.startswith(name) and "_L" in k]))
+        results[f"{name}/fve_all"] = float(np.mean([v for k, v in results.items() if k.startswith(f"{name}/fve_L")]))
+        results[f"{name}/cos_all"] = float(np.mean([v for k, v in results.items() if k.startswith(f"{name}/cos_L")]))
     print(json.dumps({k: round(v, 4) for k, v in results.items()}, indent=1))
     with open(args.out, "w") as f:
         for p in val: f.write(json.dumps({"id": p.id, "layer": p.layer, "reference": ref[p.id], "generated": gen[p.id]}, ensure_ascii=False) + "\n")
