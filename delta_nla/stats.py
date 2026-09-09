@@ -14,16 +14,19 @@ def main():
     for l in open(args.evidence):
         e = json.loads(l); by[e["layer"]].append(e)
     rows = []
-    for n in sorted(by):
-        es = by[n]
+    for key in sorted(by):
+        es = by[key]; n = key[0]
         def med(f): return float(np.median([f(e) for e in es]))
         def frac(f): return float(np.mean([f(e) for e in es]))
+        has_split = "attn" in es[0]["effect"]
         row = {
-            "layer": n, "n": len(es),
+            "layer": (f"{es[0]['span'][0]}-{es[0]['span'][1]}" if es[0].get("span") else n), "n": len(es),
             "rel_norm_med": med(lambda e: e["magnitude"]["rel_norm"]),
             "kl_all_med": med(lambda e: e["effect"]["all"]["kl"]),
-            "kl_attn_med": med(lambda e: e["effect"]["attn"]["kl"]),
-            "kl_mlp_med": med(lambda e: e["effect"]["mlp"]["kl"]),
+            "kl_p90": float(np.percentile([e["effect"]["all"]["kl"] for e in es], 90)),
+            "kl_attn_med": med(lambda e: e["effect"]["attn"]["kl"]) if has_split else float("nan"),
+            "kl_mlp_med": med(lambda e: e["effect"]["mlp"]["kl"]) if has_split else float("nan"),
+            "later_kl_per_pos_med": med(lambda e: e["effect"]["all"].get("later_kl_sum", 0.0) / max(1, e["effect"]["all"].get("later_positions", 1))),
             "top1_flip_frac": frac(lambda e: e["effect"]["all"]["top1_changes"]),
             "attn_share_med": med(lambda e: e["magnitude"]["attn_share"]),
             "sink_frac_med": med(lambda e: e["sources"]["sink_frac"]),
