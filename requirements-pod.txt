@@ -1,8 +1,8 @@
+numpy>=2,<3
 transformers==5.16.1
 datasets
 accelerate
 safetensors
-numpy
 wandb
 runpod
 peft

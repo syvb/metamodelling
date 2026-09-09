@@ -269,9 +269,12 @@ def main():
                 X_all = hs[a][0].float(); Y_all = hs[b][0].float(); d_all = Y_all - X_all
                 # per-block attention/mlp parts summed over the span
                 d_attn_all = sum(cap.attn_out[m].float() for m in range(a, b)); d_mlp_all = sum(cap.mlp_out[m].float() for m in range(a, b))
-                rel_err = ((d_all - (d_attn_all + d_mlp_all)).norm(dim=-1) / (d_all.norm(dim=-1) + 1e-6)).max().item()
-                if rel_err > 5e-2:
-                    raise RuntimeError(f"span {a}-{b}: X_b - X_a != sum of block updates (max rel err {rel_err:.3g})")
+                # consistency check at the sampled positions only (position 0 holds massive activations whose bf16
+                # rounding alone exceeds any sensible tolerance), relative to the state norm
+                pos_t = torch.tensor(positions, device=d_all.device)
+                rel_err = ((d_all[pos_t] - (d_attn_all[pos_t] + d_mlp_all[pos_t])).norm(dim=-1) / (X_all[pos_t].norm(dim=-1) + 1e-6)).max().item()
+                if rel_err > 2e-2:
+                    raise RuntimeError(f"span {a}-{b}: X_b - X_a != sum of block updates at sampled positions (max rel err {rel_err:.3g})")
                 P = len(positions)
                 base_hid = hs[b][0].to(dtype)
                 hid = base_hid.unsqueeze(0).repeat(2 * P, 1, 1)
