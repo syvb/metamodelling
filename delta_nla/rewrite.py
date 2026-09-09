@@ -122,6 +122,8 @@ async def run(args):
     evs = [json.loads(l) for l in open(args.evidence)]
     if args.ids:
         want = set(args.ids.split(",")); evs = [e for e in evs if e["id"] in want]
+    if args.layers:
+        keep = {int(x) for x in args.layers.split(",")}; evs = [e for e in evs if e["layer"] in keep]
     evs = [e for e in evs if e["id"] not in done]
     if args.limit:
         evs = evs[: args.limit]
@@ -153,6 +155,7 @@ def main():
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--ids", default="")
+    ap.add_argument("--layers", default="", help="comma list of layers to include")
     ap.add_argument("--max-tokens", type=int, default=1500)
     ap.add_argument("--reasoning", default="low", help="OpenRouter reasoning effort: minimal/low/medium/high")
     ap.add_argument("--temperature", type=float, default=0.7)
