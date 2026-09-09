@@ -12,7 +12,7 @@ def main():
     args = ap.parse_args()
     by = defaultdict(list)
     for l in open(args.evidence):
-        e = json.loads(l); by[e["layer"]].append(e)
+        e = json.loads(l); by[(e["layer"], tuple(e.get("span") or ()))].append(e)
     rows = []
     for key in sorted(by):
         es = by[key]; n = key[0]
