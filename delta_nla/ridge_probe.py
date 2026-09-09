@@ -51,7 +51,8 @@ def main():
     ap.add_argument("--model", default="sentence-transformers/all-MiniLM-L6-v2")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--min-per-layer", type=int, default=200)
-    ap.add_argument("--features", default="minilm", choices=["minilm", "tfidf", "both"], help="text featurisation")
+    ap.add_argument("--features", default="minilm", choices=["minilm", "tfidf", "both", "scalars"], help="text featurisation; 'scalars' = 4 evidence scalars only (no text)")
+    ap.add_argument("--residualize-x", action="store_true", help="target = d minus its ridge prediction from X (512 PCs), fit on train")
     ap.add_argument("--tfidf-dim", type=int, default=2048)
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -89,6 +90,10 @@ def main():
     X, D = load_vecs(args.raw, set(all_ids))
 
     feats = []
+    if args.features == "scalars":
+        Z = np.array([[ev[i]["ev"]["magnitude"]["rel_norm_pct"] / 100, ev[i]["ev"]["magnitude"]["kl_pct"] / 100, ev[i]["ev"]["magnitude"]["attn_share"],
+                       float(ev[i]["ev"]["effect"]["all"]["top1_changes"])] for i in all_ids], dtype=np.float32)
+        feats.append(np.concatenate([Z, (Z[:, :2] * 4).astype(int) / 4.0], 1))  # raw + bucketed
     if args.features in ("minilm", "both"):
         from sentence_transformers import SentenceTransformer
         st = SentenceTransformer(args.model, device="cpu")
@@ -118,6 +123,12 @@ def main():
         E = np.stack([E_all[i] for i in ids]).astype(np.float32)
         Dm = np.stack([D[i] for i in ids]); Xm = np.stack([X[i] for i in ids])
         Xm = Xm / np.linalg.norm(Xm, axis=1, keepdims=True)
+        if args.residualize_x:
+            # remove the part of d linearly predictable from X (fit on train docs only)
+            fm = Xm[tr].mean(0); Xc = Xm[tr] - fm; mu = Dm[tr].mean(0)
+            _, _, Vx = np.linalg.svd(Xc, full_matrices=False); Pz = Vx[:512]
+            Ztr = Xc @ Pz.T; W = np.linalg.solve(Ztr.T @ Ztr + 1e2 * np.eye(512, dtype=np.float32), Ztr.T @ (Dm[tr] - mu))
+            Dm = Dm - ((Xm - fm) @ Pz.T) @ W
         fve_d, cos_d, lam = ridge_fit_eval(E, Dm, tr, va, te)
         perm = np.random.default_rng(args.seed).permutation(len(ids))
         fve_s, _, _ = ridge_fit_eval(E[perm], Dm, tr, va, te)

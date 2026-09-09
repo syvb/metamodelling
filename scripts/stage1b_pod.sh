@@ -4,7 +4,7 @@
 set -euo pipefail
 DESC=${1:-data/raw/descriptions_v34.jsonl}
 LAYERS=${LAYERS:-12,18,24}; MODEL=${MODEL:-Qwen/Qwen3-8B}
-cd /workspace/metamodelling && git pull -q && git log --oneline | head -1
+cd /workspace/metamodelling && git pull -q && git log --oneline -1
 echo "== AR v2 (linear head, unit targets, 3 epochs)"
 python -m delta_nla.train_ar --model $MODEL --ar-layers 24 --descriptions $DESC --layers $LAYERS --out runs/ar_v2 --epochs 3 --bs 16 --head linear --target unit --cos-weight 1.0 --lr 2e-4 --head-lr 1e-3 --wandb delta-nla
 echo "== AR v2 shuffled-text control (1 epoch)"
