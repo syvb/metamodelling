@@ -15,8 +15,7 @@ a = ap.parse_args()
 cmd = (
     "/start.sh >/dev/null 2>&1 & mkdir -p /workspace && exec > >(tee -a /workspace/boot.log) 2>&1; set -x; cd /workspace && rm -rf metamodelling && "
     f"git clone -q {REPO} && cd metamodelling && pip uninstall -y -q torchvision torchaudio; pip install -q -r requirements-pod.txt peft 2>&1 | tail -2 && "
-    "python -c 'from huggingface_hub import snapshot_download; import os; snapshot_download(\"syvb/delta-nla-qwen3-8b-warmstart\", repo_type=\"dataset\", local_dir=\"data/hf\", allow_patterns=[\"fineweb/*\"])' && "
-    "mkdir -p data && ln -sfn /workspace/metamodelling/data/hf/fineweb data/raw && ls data/raw && "
+    "python scripts/pull_hf_data.py && "
     f"LAYERS={a.layers} EPOCHS={a.epochs} bash scripts/stage1_pod.sh data/raw/{a.desc}; echo FINISHED; sleep infinity"
 )
 fallbacks = [(a.gpu, a.cloud), ("NVIDIA A100 80GB PCIe", "COMMUNITY"), ("NVIDIA H100 PCIe", "SECURE"), ("NVIDIA H100 PCIe", "COMMUNITY"), ("NVIDIA A100-SXM4-80GB", "SECURE")]
