@@ -48,6 +48,7 @@ def main():
     ap.add_argument("--descriptions", required=True, help="jsonl with id + description (or 'template' to generate)")
     ap.add_argument("--field", default="description")
     ap.add_argument("--layers", default="")
+    ap.add_argument("--spans", default="", help="comma list like 12-18,18-24 to restrict span records")
     ap.add_argument("--model", default="sentence-transformers/all-MiniLM-L6-v2")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--min-per-layer", type=int, default=200)
@@ -60,7 +61,10 @@ def main():
     ev = {}
     for l in open(args.evidence):
         e = json.loads(l)
-        ev[e["id"]] = {"layer": e["layer"], "doc": e["doc_id"], "ev": e}
+        key = f"{e['span'][0]}-{e['span'][1]}" if e.get("span") else e["layer"]
+        if args.spans and str(key) not in args.spans.split(","):
+            continue
+        ev[e["id"]] = {"layer": key, "doc": e["doc_id"], "ev": e}
     if args.descriptions == "template":
         from .templates import describe
         texts = {i: describe(v["ev"], random.Random(hash(i) & 0xFFFF)) for i, v in ev.items()}
@@ -112,7 +116,7 @@ def main():
     E_all = {i: emb[k] for k, i in enumerate(all_ids)}
 
     print(f"{'layer':>5} {'n':>5} | {'FVE_d':>7} {'cos_d':>6} | {'FVE_d_shuf':>10} | {'FVE_X':>7} {'cos_X':>6} | lam")
-    for n in sorted(by_layer):
+    for n in sorted(by_layer, key=str):
         ids = by_layer[n]
         docs = sorted({ev[i]["doc"] for i in ids}); rng.shuffle(docs)
         nd = len(docs); val_docs = set(docs[: nd // 8]); test_docs = set(docs[nd // 8: nd // 4])
@@ -133,7 +137,7 @@ def main():
         perm = np.random.default_rng(args.seed).permutation(len(ids))
         fve_s, _, _ = ridge_fit_eval(E[perm], Dm, tr, va, te)
         fve_x, cos_x, _ = ridge_fit_eval(E, Xm, tr, va, te)
-        print(f"{n:>5} {len(ids):>5} | {fve_d:>7.3f} {cos_d:>6.3f} | {fve_s:>10.3f} | {fve_x:>7.3f} {cos_x:>6.3f} | {lam:g}")
+        print(f"{str(n):>7} {len(ids):>5} | {fve_d:>7.3f} {cos_d:>6.3f} | {fve_s:>10.3f} | {fve_x:>7.3f} {cos_x:>6.3f} | {lam:g}")
     print("FVE = held-out fraction of variance explained (about the train mean); _shuf = descriptions shuffled across records; FVE_X = predicting the (unit-norm) incoming state instead of Delta")
 
 
